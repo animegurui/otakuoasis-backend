@@ -1,45 +1,62 @@
-const express = require("express");
-const cors = require("cors");
-const fetch = require("node-fetch");
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+dotenv.config();
 
 const app = express();
 app.use(cors());
+app.use(express.json());
+
 const PORT = process.env.PORT || 5000;
 
-// ✅ Search anime (AniList API through consumet API)
+// Health/root route so you don't see "Cannot GET /"
+app.get("/", (req, res) => {
+  res.status(200).json({
+    ok: true,
+    name: "OtakuOasis Backend",
+    message: "Backend is running",
+    docs: ["/api/search?q=naruto", "/api/info/:id", "/api/watch/:episodeId"]
+  });
+});
+
+// Search anime (Consumet / gogoanime)
 app.get("/api/search", async (req, res) => {
   try {
-    const q = req.query.q;
-    if (!q) return res.status(400).json({ error: "Query ?q= missing" });
+    const q = (req.query.q || "").trim();
+    if (!q) return res.status(400).json({ error: "Missing ?q query" });
 
-    const resp = await fetch(`https://api.consumet.org/anime/gogoanime/${encodeURIComponent(q)}`);
-    const data = await resp.json();
+    const r = await fetch(`https://api.consumet.org/anime/gogoanime/${encodeURIComponent(q)}`);
+    const data = await r.json();
+    // Consumet returns { results: [...] }
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch anime search" });
+    console.error("Search error:", err);
+    res.status(500).json({ error: "Failed to search anime" });
   }
 });
 
-// ✅ Get anime info
+// Anime info + episodes
 app.get("/api/info/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    const resp = await fetch(`https://api.consumet.org/anime/gogoanime/info/${id}`);
-    const data = await resp.json();
+    const r = await fetch(`https://api.consumet.org/anime/gogoanime/info/${encodeURIComponent(id)}`);
+    const data = await r.json();
     res.json(data);
   } catch (err) {
+    console.error("Info error:", err);
     res.status(500).json({ error: "Failed to fetch anime info" });
   }
 });
 
-// ✅ Get episode streaming sources
+// Episode streaming sources
 app.get("/api/watch/:episodeId", async (req, res) => {
   try {
     const episodeId = req.params.episodeId;
-    const resp = await fetch(`https://api.consumet.org/anime/gogoanime/watch/${episodeId}`);
-    const data = await resp.json();
+    const r = await fetch(`https://api.consumet.org/anime/gogoanime/watch/${encodeURIComponent(episodeId)}`);
+    const data = await r.json();
     res.json(data);
   } catch (err) {
+    console.error("Watch error:", err);
     res.status(500).json({ error: "Failed to fetch episode sources" });
   }
 });
