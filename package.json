@@ -1,5 +1,4 @@
-
-  "name": "anime-backend",
+ "name": "anime-backend",
   "version": "1.0.0",
   "description": "Backend server for anime streaming platform",
   "main": "server.js",
