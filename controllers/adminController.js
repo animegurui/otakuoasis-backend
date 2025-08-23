@@ -62,4 +62,3 @@ export const getSystemStats = async (req, res) => {
     logger.error(`System stats error: ${error.message}`);
     res.status(500).json({ success: false, message: 'Failed to get system stats' });
   }
- 
