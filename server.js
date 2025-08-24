@@ -20,6 +20,26 @@ mongoose.connect(MONGO_URI, {
 // --- Aggregated scraper instance
 const scraper = new AggregatedScraper();
 
+// --- Root route (homepage)
+app.get('/', (req, res) => {
+  res.json({
+    message: "🚀 Welcome to OtakuOasis API",
+    routes: {
+      health: "/health",
+      trending: "/trending",
+      search: "/search?q=naruto",
+      episodes: "/episodes/:source/:slug",
+      episodeSources: "/episode-sources/:source/:slug/:episode",
+      debugMongo: "/__debug/mongo"
+    }
+  });
+});
+
+// --- Health check route
+app.get('/health', (req, res) => {
+  res.json({ status: "ok", uptime: process.uptime() });
+});
+
 // --- Routes
 app.get('/trending', async (req, res) => {
   try {
