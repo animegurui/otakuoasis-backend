@@ -114,8 +114,15 @@ cron.schedule('0 * * * *', async () => {
   console.log('✅ Hourly scrape finished');
 });
 
-// 🔘 Manual trigger endpoint
+// 🔘 Manual trigger endpoint (protected with API key)
 app.post('/scrape-now', async (req, res) => {
+  const providedKey = req.headers['x-api-key'];
+  const expectedKey = process.env.SCRAPER_KEY;
+
+  if (expectedKey && providedKey !== expectedKey) {
+    return res.status(403).json({ error: 'Forbidden – invalid API key' });
+  }
+
   try {
     for (const scraper of scrapers) {
       await scraper.run();
