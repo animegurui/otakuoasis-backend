@@ -1,30 +1,27 @@
 import Redis from 'ioredis';
 import logger from './logger.js';
 
-const redis = new Redis({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD,
-  connectTimeout: 10000,
-  maxRetriesPerRequest: 3
-});
+let redis;
 
-// Track connection status
-redis.isReady = false;
+if (process.env.REDIS_HOST && process.env.REDIS_PORT) {
+  redis = new Redis({
+    host: process.env.REDIS_HOST,
+    port: process.env.REDIS_PORT,
+    password: process.env.REDIS_PASSWORD || undefined,
+    connectTimeout: 10000,
+    maxRetriesPerRequest: 3,
+  });
 
-redis.on('connect', () => {
-  redis.isReady = true;
-  logger.info('✅ Redis connected');
-});
+  redis.on('connect', () => {
+    logger.info('✅ Redis connected');
+  });
 
-redis.on('error', (error) => {
-  redis.isReady = false;
-  logger.error(`❌ Redis error: ${error.message}`);
-});
-
-redis.on('end', () => {
-  redis.isReady = false;
-  logger.warn('⚠️ Redis connection closed');
-});
+  redis.on('error', (error) => {
+    logger.warn(`⚠️ Redis connection failed: ${error.message}. Caching disabled.`);
+  });
+} else {
+  logger.warn('⚠️ Redis not configured. Caching disabled.');
+  redis = null; // Disable Redis if not configured
+}
 
 export default redis;
