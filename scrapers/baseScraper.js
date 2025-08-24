@@ -3,6 +3,7 @@ import cheerio from 'cheerio';
 import logger from '../utils/logger.js';
 import { getProxy } from '../services/proxyService.js';
 import redis from '../config/redisClient.js';   // ✅ Redis client
+import mongoose from 'mongoose'; // <-- added to count Anime docs
 
 class BaseScraper {
   constructor(baseUrl, config = {}) {
@@ -130,6 +131,92 @@ class BaseScraper {
       return url;
     }
   }
+
+  // ------------------------
+  // New helpers for health
+  // ------------------------
+
+  /**
+   * markRunSuccess
+   * - sets scraper:lastScrape
+   * - resets scraper:errors to 0
+   * - sets scraper:entriesInDatabase (if a mongoose Anime model exists)
+   */
+  async markRunSuccess() {
+    try {
+      if (!redis) return;
+
+      const now = new Date().toISOString();
+      await redis.set('scraper:lastScrape', now);
+
+      // attempt to count Anime documents if model is registered
+      try {
+        const AnimeModel = mongoose.models && mongoose.models.Anime;
+        if (AnimeModel) {
+          const count = await AnimeModel.countDocuments();
+          // store as string/number — redis client will stringify if necessary
+          await redis.set('scraper:entriesInDatabase', String(count));
+        }
+      } catch (countErr) {
+        logger.warn('⚠️ Could not count Anime documents for health check:', countErr.message || countErr);
+      }
+
+      // reset error counter
+      await redis.set('scraper:errors', '0');
+      logger.info('✅ Scraper health metadata updated (success)');
+    } catch (err) {
+      logger.warn('⚠️ Failed to update scraper success metadata in Redis:', err.message || err);
+    }
+  }
+
+  /**
+   * markRunError
+   * - increments scraper:errors counter
+   * - logs the error
+   */
+  async markRunError(error) {
+    try {
+      if (!redis) return;
+      // increment the error counter atomically (if redis client supports incr)
+      if (typeof redis.incr === 'function') {
+        await redis.incr('scraper:errors');
+      } else {
+        // fallback: get -> parse -> set
+        const current = await redis.get('scraper:errors');
+        const next = (parseInt(current, 10) || 0) + 1;
+        await redis.set('scraper:errors', String(next));
+      }
+    } catch (err) {
+      logger.warn('⚠️ Failed to increment scraper error counter in Redis:', err.message || err);
+    }
+
+    logger.error('❌ Scraper run error:', error?.message || String(error));
+  }
+
+  /**
+   * run
+   * - helper wrapper to execute a scraping routine and automatically
+   *   update health metadata on success/failure.
+   *
+   * Usage:
+   *   await this.run(async () => {
+   *     // your scraping routine here (e.g. scrapeTrending, scrapeSearch, etc.)
+   *   });
+   */
+  async run(scrapeFn) {
+    try {
+      await scrapeFn();
+      await this.markRunSuccess();
+    } catch (err) {
+      await this.markRunError(err);
+      // rethrow so caller knows it failed
+      throw err;
+    }
+  }
+
+  // ------------------------
+  // End new helpers
+  // ------------------------
 
   async scrapeTrending(limit) {
     throw new Error('scrapeTrending method not implemented');
