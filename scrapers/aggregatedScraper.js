@@ -1,7 +1,11 @@
+// scrapers/aggregatedScraper.js
+
 import MultiSourceScraper from './multiSourceScraper.js';
 import mongoose from 'mongoose';
 
-// --- MongoDB Cache Schema
+// ====================
+// MongoDB Cache Schema
+// ====================
 const CacheSchema = new mongoose.Schema({
   key: { type: String, unique: true },
   data: mongoose.Schema.Types.Mixed,
@@ -9,6 +13,9 @@ const CacheSchema = new mongoose.Schema({
 });
 const Cache = mongoose.models.Cache || mongoose.model('Cache', CacheSchema);
 
+// ====================
+// AggregatedScraper Class
+// ====================
 export default class AggregatedScraper {
   constructor() {
     this.multiScraper = new MultiSourceScraper();
@@ -19,7 +26,9 @@ export default class AggregatedScraper {
     this.lastFetch = {};
   }
 
-  // --- Internal: Persistent Cache Get
+  // --------------------
+  // Internal: Persistent Cache Get
+  // --------------------
   async _getCache(key) {
     const entry = await Cache.findOne({ key });
     if (entry && (Date.now() - new Date(entry.updatedAt).getTime() < this.cacheTTL)) {
@@ -28,7 +37,9 @@ export default class AggregatedScraper {
     return null;
   }
 
-  // --- Internal: Persistent Cache Set
+  // --------------------
+  // Internal: Persistent Cache Set
+  // --------------------
   async _setCache(key, data) {
     await Cache.findOneAndUpdate(
       { key },
@@ -37,7 +48,9 @@ export default class AggregatedScraper {
     );
   }
 
-  // --- Internal: Rate-limit per source
+  // --------------------
+  // Internal: Rate-limit per source
+  // --------------------
   async _rateLimit(source) {
     const last = this.lastFetch[source] || 0;
     const wait = this.rateLimitMs - (Date.now() - last);
@@ -45,7 +58,9 @@ export default class AggregatedScraper {
     this.lastFetch[source] = Date.now();
   }
 
-  // -------------------- Aggregate Trending --------------------
+  // --------------------
+  // Aggregate Trending
+  // --------------------
   async aggregateTrending(limitPerSource = 20, sortBy = 'latestEpisode') {
     const trendingLists = await Promise.all(
       this.sources.map(async source => {
@@ -63,7 +78,9 @@ export default class AggregatedScraper {
     return this.mergeAndSort(trendingLists, sortBy);
   }
 
-  // -------------------- Aggregate Search --------------------
+  // --------------------
+  // Aggregate Search
+  // --------------------
   async aggregateSearch(query, limitPerSource = 20, fetchDetails = false) {
     const searchLists = await Promise.all(
       this.sources.map(async source => {
@@ -99,7 +116,9 @@ export default class AggregatedScraper {
     return merged;
   }
 
-  // -------------------- Episodes --------------------
+  // --------------------
+  // Aggregate Episodes
+  // --------------------
   async aggregateEpisodes(source, slug) {
     if (!this.sources.includes(source)) throw new Error(`Unknown source: ${source}`);
     const cacheKey = `episodes:${source}:${slug}`;
@@ -112,7 +131,9 @@ export default class AggregatedScraper {
     return episodes;
   }
 
-  // -------------------- Episode Sources --------------------
+  // --------------------
+  // Aggregate Episode Sources
+  // --------------------
   async aggregateEpisodeSources(source, slug, episodeNumber, preferredServer = '') {
     if (!this.sources.includes(source)) throw new Error(`Unknown source: ${source}`);
     const cacheKey = `epSources:${source}:${slug}:${episodeNumber}:${preferredServer}`;
@@ -127,7 +148,9 @@ export default class AggregatedScraper {
     return sources;
   }
 
-  // -------------------- Merge & Sort --------------------
+  // --------------------
+  // Merge & Sort Helper
+  // --------------------
   mergeAndSort(lists, sortBy = 'latestEpisode') {
     let merged = lists.flat();
     const seen = new Set();
