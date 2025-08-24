@@ -1,221 +1,148 @@
 import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import redis from './utils/redis.js';
-import cron from 'node-cron';
+import cors from 'cors';
+import AggregatedScraper from './aggregatedScraper.js';
 
-// ✅ Import scrapers (match case-sensitive filenames in your repo)
-import GogoAnimeScraper from './scrapers/gogoanimeScraper.js';
-import NineAnimeScraper from './scrapers/nineanimeScraper.js';
-import ZoroScraper from './scrapers/zoroScraper.js';
+const PORT = process.env.PORT || 3000;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/animeDB';
 
-dotenv.config();
-const app = express();
-app.set('trust proxy', true);
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// --- Morgan logging (optional) ---
-let morganMiddleware = (req, res, next) => next();
-try {
-  const morganModule = await import('morgan').catch(() => null);
-  const morgan = morganModule && (morganModule.default || morganModule);
-  if (morgan) {
-    morganMiddleware = morgan('dev');
-    console.log('✅ Morgan loaded for request logging');
-  } else {
-    console.warn('⚠️ Morgan not installed, skipping request logging');
-  }
-} catch (err) {
-  console.warn('⚠️ Morgan import failed, skipping request logging', err.message);
-}
-app.use(morganMiddleware);
-
-// --- MongoDB connection ---
-if (process.env.MONGO_URI) {
-  mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-  }).then(() => {
-    console.log('✅ Connected to MongoDB');
-  }).catch(err => {
-    console.error('❌ MongoDB connection error:', err.message || err);
-  });
-} else {
-  console.warn('⚠️ MONGO_URI not set — skipping MongoDB connection');
-}
-
-// --- Anime routes ---
-try {
-  const animeRoutesModule = await import('./routes/animeRoutes.js').catch(() => null);
-  const animeRoutes = animeRoutesModule && (animeRoutesModule.default || animeRoutesModule);
-  if (animeRoutes) {
-    app.use('/api/anime', animeRoutes);
-    console.log('✅ Mounted /api/anime routes');
-  } else {
-    console.warn('⚠️ ./routes/animeRoutes.js not found — /api/anime routes not mounted');
-  }
-} catch (err) {
-  console.warn('⚠️ Error loading animeRoutes:', err.message || err);
-}
-
-// --- Cache clear routes (optional) ---
-try {
-  const cacheUtilsModule = await import('./utils/cacheUtils.js').catch(() => null);
-  const { clearCache } = cacheUtilsModule || {};
-  if (typeof clearCache === 'function') {
-    app.delete('/cache/:slug', async (req, res) => {
-      try {
-        const slug = req.params.slug;
-        await clearCache(slug);
-        res.json({ message: `Cache cleared for ${slug}` });
-      } catch (error) {
-        res.status(500).json({ error: error.message || String(error) });
-      }
+async function start() {
+  try {
+    // Connect to MongoDB
+    await mongoose.connect(MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
     });
+    console.log(`✅ Connected to MongoDB at ${MONGO_URI}`);
 
-    app.delete('/cache', async (req, res) => {
+    // Instantiate scraper
+    const scraper = new AggregatedScraper();
+
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
+
+    // -------------------- Health check --------------------
+    app.get('/', (req, res) => res.json({ success: true, message: 'Anime Scraper API is running!' }));
+
+    // -------------------- Full healthStatus --------------------
+    app.get('/healthStatus', async (req, res) => {
+      const status = {
+        server: true,
+        mongo: false,
+        scraper: false,
+        timestamp: new Date()
+      };
+
+      // MongoDB check
       try {
-        await clearCache('*');
-        res.json({ message: 'All cache cleared' });
-      } catch (error) {
-        res.status(500).json({ error: error.message || String(error) });
-      }
-    });
-
-    console.log('✅ Cache management routes added');
-  } else {
-    console.warn('⚠️ clearCache not found — cache routes not added');
-  }
-} catch (err) {
-  console.warn('⚠️ Error loading cacheUtils:', err.message || err);
-}
-
-// --- Scraper Setup ---
-const scrapers = [
-  new GogoAnimeScraper(),
-  new NineAnimeScraper(),
-  new ZoroScraper()
-];
-
-// 🔄 Run scrapers every hour
-cron.schedule('0 * * * *', async () => {
-  console.log('⏳ Starting hourly scrape...');
-  for (const scraper of scrapers) {
-    try {
-      await scraper.run();
-    } catch (err) {
-      console.error(`❌ Error running ${scraper.constructor.name}:`, err.message);
-    }
-  }
-  console.log('✅ Hourly scrape finished');
-});
-
-// 🔘 Manual trigger endpoint (POST + GET)
-app.post('/scrape-now', async (req, res) => {
-  try {
-    for (const scraper of scrapers) {
-      await scraper.run();
-    }
-    res.json({ message: '✅ Manual scrape complete (POST)' });
-  } catch (error) {
-    res.status(500).json({ error: error.message || String(error) });
-  }
-});
-
-app.get('/scrape-now', async (req, res) => {
-  try {
-    for (const scraper of scrapers) {
-      await scraper.run();
-    }
-    res.json({ message: '✅ Manual scrape complete (GET)' });
-  } catch (error) {
-    res.status(500).json({ error: error.message || String(error) });
-  }
-});
-
-// --- System endpoints ---
-app.get('/ready', (req, res) => {
-  res.json({
-    status: 'ready',
-    uptime: process.uptime(),
-    timestamp: new Date()
-  });
-});
-
-app.get('/health', async (req, res) => {
-  const healthStatus = {
-    uptime: process.uptime(),
-    timestamp: new Date(),
-    services: {
-      mongo: 'unknown',
-      redis: 'unknown'
-    },
-    scraper: {
-      lastScrape: null,
-      entriesInDatabase: null,
-      errors: 0
-    }
-  };
-
-  // Mongo
-  try {
-    if (mongoose.connection.readyState === 1) {
-      healthStatus.services.mongo = 'up';
-
-      try {
-        const AnimeModel = mongoose.models.Anime || null;
-        if (AnimeModel) {
-          healthStatus.scraper.entriesInDatabase = await AnimeModel.countDocuments();
-        }
+        status.mongo = mongoose.connection.readyState === 1;
       } catch (err) {
-        console.warn('⚠️ Could not count anime entries:', err.message);
+        status.mongo = false;
       }
-    } else {
-      healthStatus.services.mongo = 'down';
-    }
-  } catch {
-    healthStatus.services.mongo = 'down';
+
+      // Scraper check: quick trending fetch
+      try {
+        await scraper.aggregateTrending(1); // fetch 1 trending anime to test scraper
+        status.scraper = true;
+      } catch (err) {
+        status.scraper = false;
+      }
+
+      const allHealthy = status.server && status.mongo && status.scraper;
+      res.status(allHealthy ? 200 : 503).json(status);
+    });
+
+    // -------------------- GET /trending --------------------
+    app.get('/trending', async (req, res) => {
+      try {
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const sortBy = req.query.sortBy || 'latestEpisode';
+        const data = await scraper.aggregateTrending(limit, sortBy);
+        res.json({ success: true, data });
+      } catch (err) {
+        console.error('GET /trending error:', err);
+        res.status(500).json({ success: false, message: err.message || 'Internal error' });
+      }
+    });
+
+    // -------------------- GET /search --------------------
+    app.get('/search', async (req, res) => {
+      try {
+        const q = req.query.q;
+        if (!q) return res.status(400).json({ success: false, message: 'Missing search query parameter "q"' });
+
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const fetchDetails = (req.query.details === 'true');
+
+        const results = await scraper.aggregateSearch(q, limit, fetchDetails);
+        res.json({ success: true, data: results });
+      } catch (err) {
+        console.error('GET /search error:', err);
+        res.status(500).json({ success: false, message: err.message || 'Internal error' });
+      }
+    });
+
+    // -------------------- GET /episodes --------------------
+    app.get('/episodes', async (req, res) => {
+      try {
+        const { source, slug } = req.query;
+        if (!source || !slug) return res.status(400).json({ success: false, message: 'Missing "source" or "slug" query parameter' });
+
+        const episodes = await scraper.aggregateEpisodes(source, slug);
+        res.json({ success: true, data: episodes });
+      } catch (err) {
+        console.error('GET /episodes error:', err);
+        res.status(500).json({ success: false, message: err.message || 'Internal error' });
+      }
+    });
+
+    // -------------------- GET /sources --------------------
+    app.get('/sources', async (req, res) => {
+      try {
+        const { source, slug, episode, server } = req.query;
+        if (!source || !slug || !episode) {
+          return res.status(400).json({ success: false, message: 'Missing "source", "slug", or "episode" query parameter' });
+        }
+
+        const episodeNumber = parseInt(episode, 10);
+        if (Number.isNaN(episodeNumber)) {
+          return res.status(400).json({ success: false, message: '"episode" must be a number' });
+        }
+
+        const sources = await scraper.aggregateEpisodeSources(source, slug, episodeNumber, server || '');
+        res.json({ success: true, data: sources });
+      } catch (err) {
+        console.error('GET /sources error:', err);
+        res.status(500).json({ success: false, message: err.message || 'Internal error' });
+      }
+    });
+
+    // -------------------- Start listening --------------------
+    const server = app.listen(PORT, () => {
+      console.log(`🚀 Anime Scraper API running at http://localhost:${PORT}`);
+    });
+
+    // Graceful shutdown
+    const shutdown = async () => {
+      console.log('⚠️ Shutting down server...');
+      server.close();
+      try {
+        await mongoose.disconnect();
+        console.log('✅ MongoDB disconnected');
+      } catch (e) {
+        console.warn('Error disconnecting MongoDB:', e);
+      }
+      process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1);
   }
+}
 
-  // Redis
-  try {
-    await redis.ping();
-    healthStatus.services.redis = 'up';
-
-    const lastScrape = await redis.get('scraper:lastScrape');
-    const scrapeErrors = await redis.get('scraper:errors');
-    healthStatus.scraper.lastScrape = lastScrape || null;
-    healthStatus.scraper.errors = scrapeErrors ? parseInt(scrapeErrors, 10) : 0;
-  } catch {
-    healthStatus.services.redis = 'down';
-  }
-
-  const isHealthy =
-    healthStatus.services.mongo === 'up' &&
-    healthStatus.services.redis === 'up';
-
-  res.status(isHealthy ? 200 : 500).json(healthStatus);
-});
-
-// Root route
-app.get('/', (req, res) => {
-  res.send('Backend is running 🚀');
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: err?.message || 'Internal Server Error' });
-});
-
-// Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
-
-export default app;
+start();
