@@ -1,43 +1,63 @@
 import express from 'express';
-import cors from 'cors';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import animeRoutes from './routes/animeRoutes.js';
-import scrapeRoutes from './routes/scrapeRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import { startScheduler } from './services/scheduler.js';
-import logger from './utils/logger.js';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import morgan from 'morgan';
+
+// import your redis cache util
+import { clearCache } from './src/utils/cacheUtils.js';
 
 dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
 
-// Database connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => logger.info('MongoDB connected'))
-  .catch(err => logger.error(`MongoDB connection error: ${err.message}`));
+// Example: connect MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log('✅ MongoDB connected'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Routes
-app.use('/api/anime', animeRoutes);
-app.use('/api/scrape', scrapeRoutes);
-app.use('/api/admin', adminRoutes);
+// --- Your existing routes ---
+// e.g.
+// import userRoutes from './src/routes/userRoutes.js';
+// app.use('/api/users', userRoutes);
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ status: 'OK', message: 'Anime API is running' });
+// ===============================
+// 🧹 Redis Cache Management Routes
+// ===============================
+
+// Clear cache for a specific slug
+app.delete('/cache/:slug', async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    await clearCache(slug);
+    res.json({ message: `Cache cleared for ${slug}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// Start scheduler
-startScheduler();
+// Clear *all* cache
+app.delete('/cache', async (req, res) => {
+  try {
+    await clearCache('*');
+    res.json({ message: 'All cache cleared' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-// Start server
+// ===============================
+
+// Server
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
- 
+
+export default app;
