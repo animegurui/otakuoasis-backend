@@ -1,18 +1,30 @@
 import Redis from 'ioredis';
-import dotenv from 'dotenv';
-dotenv.config();
 
-const redis = new Redis(process.env.REDIS_URL, {
-  tls: { rejectUnauthorized: false }, // Required for cloud Redis
-  maxRetriesPerRequest: 5,            // Allow more retries
-  connectTimeout: 10000,              // 10s timeout
+const REDIS_URL = process.env.REDIS_URL; // Make sure you set this in your .env
+
+// Create a Redis client
+const redis = new Redis(REDIS_URL, {
+  maxRetriesPerRequest: 5,   // retry a few times before failing
   reconnectOnError: (err) => {
-    console.warn('Redis reconnectOnError:', err.message);
-    return true;
+    console.warn('Redis reconnectOnError:', err.message || err);
+    return true; // automatically reconnect on errors
   },
+  lazyConnect: true, // don't connect until first command
 });
 
-redis.on('connect', () => console.info('✅ Redis connected'));
-redis.on('error', (err) => console.warn('⚠️ Redis connection failed:', err.message));
+// Handle connection events
+redis.on('connect', () => console.log('✅ Redis connected'));
+redis.on('error', (err) => console.warn('⚠️ Redis error:', err.message || err));
+redis.on('close', () => console.warn('⚠️ Redis connection closed'));
+redis.on('reconnecting', () => console.log('🔄 Redis reconnecting...'));
+
+// Optional: try connecting immediately
+(async () => {
+  try {
+    await redis.connect();
+  } catch (err) {
+    console.warn('⚠️ Initial Redis connection failed:', err.message || err);
+  }
+})();
 
 export default redis;
