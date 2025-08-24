@@ -1,33 +1,69 @@
 import BaseScraper from './baseScraper.js';
+import mongoose from 'mongoose';
+
+const Anime = mongoose.models.Anime || mongoose.model('Anime', new mongoose.Schema({
+  id: String,
+  title: String,
+  slug: String,
+  image: String,
+  latestEpisode: Number,
+  source: String,
+  updatedAt: { type: Date, default: Date.now }
+}));
 
 export default class ZoroScraper extends BaseScraper {
   constructor() {
-    super('https://zoro.to', {
-      headers: {
-        'Referer': 'https://zoro.to/',
-        'Accept-Encoding': 'gzip'
-      }
-    });
+    super('https://zoro.to'); // base URL from your update
   }
 
+  // Run: scrapes trending and upserts into MongoDB
+  async run() {
+    console.log('🚀 Running ZoroScraper...');
+    try {
+      const { data: trending } = await this.scrapeTrending(20);
+
+      if (!trending || trending.length === 0) {
+        console.warn('⚠️ No trending anime scraped from zoro');
+        return 0;
+      }
+
+      for (const anime of trending) {
+        await Anime.findOneAndUpdate(
+          { id: anime.id },
+          { ...anime, updatedAt: new Date() },
+          { upsert: true, new: true }
+        );
+      }
+
+      console.log(`✅ ZoroScraper finished — saved ${trending.length} entries`);
+      return trending.length;
+    } catch (err) {
+      console.error('❌ ZoroScraper run() failed:', err.message || err);
+      throw err;
+    }
+  }
+
+  // Trending (from your update)
   async scrapeTrending(limit = 20) {
     try {
-      const url = `${this.baseUrl}/popular`;
+      const url = `${this.baseUrl}/trending`;
       const $ = await this.fetchPage(url);
 
       const trending = [];
-
-      $('.film_list-wrap .film-detail').slice(0, limit).each((i, el) => {
+      $('.film_list-wrap .flw-item').slice(0, limit).each((i, el) => {
         const $el = $(el);
-        const title = $el.find('.film-name a').attr('title');
-        const slug = $el.find('.film-name a').attr('href').split('/')[2];
-        const image = $el.find('img').attr('data-src');
+        const title = $el.find('.dynamic-name').text().trim();
+        const href = $el.find('a').attr('href') || '';
+        const slug = href.split('/').filter(Boolean).pop() || '';
+        const image = $el.find('img').attr('data-src') || $el.find('img').attr('src') || '';
+        const episode = ($el.find('.tick-eps').text().trim().match(/\d+/) || ['1'])[0];
 
         trending.push({
           id: `zoro-${slug}`,
           title,
           slug,
           image,
+          latestEpisode: parseInt(episode, 10) || 1,
           source: 'zoro'
         });
       });
@@ -40,34 +76,30 @@ export default class ZoroScraper extends BaseScraper {
         console.warn('⚠️ reportScrape failed (zoro scrapeTrending):', rErr?.message || rErr);
       }
 
-      return {
-        data: trending,
-        sources: [this.baseUrl]
-      };
+      return { data: trending, sources: [this.baseUrl] };
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
           await this.reportScrape({ source: 'zoro', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Search: best-effort using film_list-wrap items
   async scrapeSearch(query, page = 1) {
     try {
       const url = `${this.baseUrl}/search?keyword=${encodeURIComponent(query)}&page=${page}`;
       const $ = await this.fetchPage(url);
 
       const results = [];
-      let hasMore = true;
-
-      $('.film_list-wrap .film-detail').each((i, el) => {
+      $('.film_list-wrap .flw-item').each((i, el) => {
         const $el = $(el);
-        const title = $el.find('.film-name a').attr('title');
-        const slug = $el.find('.film-name a').attr('href').split('/')[2];
-        const image = $el.find('img').attr('data-src');
+        const title = $el.find('.dynamic-name').text().trim();
+        const href = $el.find('a').attr('href') || '';
+        const slug = href.split('/').filter(Boolean).pop() || '';
+        const image = $el.find('img').attr('data-src') || $el.find('img').attr('src') || '';
 
         results.push({
           id: `zoro-${slug}`,
@@ -78,8 +110,9 @@ export default class ZoroScraper extends BaseScraper {
         });
       });
 
-      // Check if there's more pages
-      hasMore = $('.pagination').find('li:last-child a').text().includes('Next');
+      // naive hasMore detection - presence of pagination with Next text
+      let hasMore = false;
+      hasMore = $('.pagination').find('a:contains("Next"), a:contains("next")').length > 0;
 
       try {
         if (typeof this.reportScrape === 'function') {
@@ -89,55 +122,53 @@ export default class ZoroScraper extends BaseScraper {
         console.warn('⚠️ reportScrape failed (zoro scrapeSearch):', rErr?.message || rErr);
       }
 
-      return {
-        data: results,
-        hasMore,
-        currentPage: page,
-        source: 'zoro'
-      };
+      return { data: results, hasMore, currentPage: page, source: 'zoro' };
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
           await this.reportScrape({ source: 'zoro', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Anime details: best-effort selectors (may require tweaks depending on page layout)
   async scrapeAnimeDetails(slug) {
     try {
       const url = `${this.baseUrl}/watch/${slug}`;
       const $ = await this.fetchPage(url);
 
-      const title = $('.anisc-detail .film-name').text().trim();
-      const image = $('.anisc-poster .film-poster-img').attr('src');
-      const description = $('.anisc-detail .film-description').text().trim();
+      // Generic selectors with fallbacks
+      const title = $('.film-detail .title, .detail .title').first().text().trim() || $('.dynamic-name').first().text().trim();
+      const image = $('.film-poster img, .poster img').first().attr('data-src') || $('.film-poster img, .poster img').first().attr('src') || '';
+      const description = $('.film-description, .desc, .detail .content').first().text().trim() || '';
 
       const details = {};
-      $('.anisc-detail .item').each((i, el) => {
+      $('.film-detail .item, .detail .meta .row').each((i, el) => {
         const $el = $(el);
-        const key = $el.find('.name').text().trim().toLowerCase();
-        const value = $el.find('.value').text().trim();
-        details[key] = value;
+        const key = ($el.find('.label, .type').text() || $el.find('strong').text()).trim().toLowerCase();
+        const value = ($el.find('.value, .content').text() || $el.text()).trim();
+        if (key) details[key] = value;
       });
 
-      // Extract genres
+      // genres
       const genres = [];
-      $('.anisc-info .item[data-id="genres"] a').each((i, el) => {
+      $('.film-detail .genres a, .detail .genre a').each((i, el) => {
         genres.push($(el).text().trim());
       });
 
-      // Extract episodes
+      // episodes
       const episodes = [];
-      $('#episodes-content a').each((i, el) => {
+      $('#episodes a, .eps .ep-item a').each((i, el) => {
         const $el = $(el);
-        const number = $el.find('.d-title').text().replace('Episode ', '').trim();
-        const url = $el.attr('href').split('/')[2];
+        const numberText = $el.text().trim();
+        const number = parseInt(numberText.match(/\d+/)?.[0] || (i + 1), 10);
+        const href = $el.attr('href') || '';
+        const epSlug = href.split('/').filter(Boolean).pop() || '';
         episodes.push({
-          number: parseInt(number),
-          slug: url
+          number,
+          slug: epSlug
         });
       });
 
@@ -146,13 +177,13 @@ export default class ZoroScraper extends BaseScraper {
         slug,
         image,
         description,
-        type: details['type'],
+        type: details['type'] || details['format'],
         status: details['status'],
-        released: details['released'],
+        released: details['year'] || details['released'],
         genres,
         episodes,
         source: 'zoro',
-        rating: parseFloat(details['score']) || 0,
+        rating: parseFloat((details['score'] || '').split('/')[0]) || 0,
         popularity: episodes.length * 100 || 0
       };
 
@@ -171,26 +202,27 @@ export default class ZoroScraper extends BaseScraper {
           await this.reportScrape({ source: 'zoro', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Episodes list
   async scrapeEpisodes(slug) {
     try {
       const url = `${this.baseUrl}/watch/${slug}`;
       const $ = await this.fetchPage(url);
 
       const episodes = [];
-
-      $('#episodes-content a').each((i, el) => {
+      $('#episodes a, .eps .ep-item a').each((i, el) => {
         const $el = $(el);
-        const number = $el.find('.d-title').text().replace('Episode ', '').trim();
-        const url = $el.attr('href').split('/')[2];
+        const numberText = $el.text().trim();
+        const number = parseInt(numberText.match(/\d+/)?.[0] || (i + 1), 10);
+        const href = $el.attr('href') || '';
+        const epSlug = href.split('/').filter(Boolean).pop() || '';
 
         episodes.push({
-          number: parseInt(number),
-          slug: url,
+          number,
+          slug: epSlug,
           title: `Episode ${number}`,
           thumbnail: '',
           animeSlug: slug
@@ -212,17 +244,18 @@ export default class ZoroScraper extends BaseScraper {
           await this.reportScrape({ source: 'zoro', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Episode sources: looks for server list / options
   async scrapeEpisodeSources(slug, episodeNumber, server = '') {
     try {
-      const url = `${this.baseUrl}/watch/${slug}/episode/${episodeNumber}`;
+      const url = `${this.baseUrl}/watch/${slug}/ep-${episodeNumber}`;
       const $ = await this.fetchPage(url);
 
       const servers = [];
+      // Many zoro pages list sources differently — check a few common patterns
       $('#servers-list > option').each((i, el) => {
         const $el = $(el);
         servers.push({
@@ -231,35 +264,40 @@ export default class ZoroScraper extends BaseScraper {
         });
       });
 
+      // Fallback: anchors in a server list
+      $('.server-list a, .servers a').each((i, el) => {
+        const $el = $(el);
+        servers.push({
+          server: $el.text().trim() || `server-${i}`,
+          url: $el.attr('href') || $el.data('src') || ''
+        });
+      });
+
       // Filter by preferred server if specified
-      let filteredServers = servers;
+      let filtered = servers;
       if (server) {
-        filteredServers = servers.filter(s =>
-          s.server.toLowerCase().includes(server.toLowerCase())
-        );
+        filtered = servers.filter(s => s.server.toLowerCase().includes(server.toLowerCase()));
       }
 
-      // If no filtered servers, use the first available
-      if (filteredServers.length === 0 && servers.length > 0) {
-        filteredServers = [servers[0]];
+      if (filtered.length === 0 && servers.length > 0) {
+        filtered = [servers[0]];
       }
 
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'zoro', entries: filteredServers.length, errors: 0 });
+          await this.reportScrape({ source: 'zoro', entries: filtered.length, errors: 0 });
         }
       } catch (rErr) {
         console.warn('⚠️ reportScrape failed (zoro scrapeEpisodeSources):', rErr?.message || rErr);
       }
 
-      return filteredServers;
+      return filtered;
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
           await this.reportScrape({ source: 'zoro', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
