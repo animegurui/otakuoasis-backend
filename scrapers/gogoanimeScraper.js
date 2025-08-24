@@ -1,4 +1,16 @@
 import BaseScraper from './baseScraper.js';
+import mongoose from 'mongoose';
+
+// Use your Anime schema/model (adjust fields if needed)
+const Anime = mongoose.models.Anime || mongoose.model('Anime', new mongoose.Schema({
+  id: String,
+  title: String,
+  slug: String,
+  image: String,
+  latestEpisode: Number,
+  source: String,
+  updatedAt: { type: Date, default: Date.now }
+}));
 
 export default class GogoanimeScraper extends BaseScraper {
   constructor() {
@@ -8,6 +20,34 @@ export default class GogoanimeScraper extends BaseScraper {
         'Accept-Encoding': 'gzip'
       }
     });
+  }
+
+  // 🔥 New run() method for server.js + /scrape-now
+  async run() {
+    console.log('🚀 Running GogoanimeScraper...');
+    try {
+      const { data: trending } = await this.scrapeTrending(20);
+
+      if (trending.length === 0) {
+        console.warn('⚠️ No trending anime scraped from gogoanime');
+        return;
+      }
+
+      // Save/update in MongoDB
+      for (const anime of trending) {
+        await Anime.findOneAndUpdate(
+          { id: anime.id },
+          { ...anime, updatedAt: new Date() },
+          { upsert: true, new: true }
+        );
+      }
+
+      console.log(`✅ GogoanimeScraper finished — saved ${trending.length} entries`);
+      return trending.length;
+    } catch (err) {
+      console.error('❌ GogoanimeScraper run() failed:', err.message);
+      throw err;
+    }
   }
 
   async scrapeTrending(limit = 20) {
@@ -34,15 +74,8 @@ export default class GogoanimeScraper extends BaseScraper {
         });
       });
 
-      // Report scraping stats if BaseScraper implements reportScrape
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: trending.length, errors: 0 });
-        }
-      } catch (rErr) {
-        // Don't fail the method because of reporting
-        // eslint-disable-next-line no-console
-        console.warn('⚠️ reportScrape failed (gogoanime scrapeTrending):', rErr?.message || rErr);
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: trending.length, errors: 0 });
       }
 
       return {
@@ -50,12 +83,9 @@ export default class GogoanimeScraper extends BaseScraper {
         sources: [this.baseUrl]
       };
     } catch (err) {
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
-        }
-      } catch (_) { /* swallow */ }
-
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
+      }
       throw err;
     }
   }
@@ -66,7 +96,6 @@ export default class GogoanimeScraper extends BaseScraper {
       const $ = await this.fetchPage(url);
 
       const results = [];
-      let hasMore = true;
 
       $('.last_episodes > ul > li').each((i, el) => {
         const $el = $(el);
@@ -85,15 +114,10 @@ export default class GogoanimeScraper extends BaseScraper {
         });
       });
 
-      // Check if there's more pages
-      hasMore = $('.pagination-list').find('li:last-child a').text().includes('Next');
+      const hasMore = $('.pagination-list').find('li:last-child a').text().includes('Next');
 
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: results.length, errors: 0 });
-        }
-      } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (gogoanime scrapeSearch):', rErr?.message || rErr);
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: results.length, errors: 0 });
       }
 
       return {
@@ -103,12 +127,9 @@ export default class GogoanimeScraper extends BaseScraper {
         source: 'gogoanime'
       };
     } catch (err) {
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
-        }
-      } catch (_) {}
-
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
+      }
       throw err;
     }
   }
@@ -130,13 +151,11 @@ export default class GogoanimeScraper extends BaseScraper {
         details[key] = value;
       });
 
-      // Extract genres
       const genres = [];
       $('.anime_info_body .type:contains("Genre") a').each((i, el) => {
         genres.push($(el).text().trim());
       });
 
-      // Extract episodes
       const episodes = [];
       $('#episode_related li').each((i, el) => {
         const $el = $(el);
@@ -163,23 +182,15 @@ export default class GogoanimeScraper extends BaseScraper {
         popularity: episodes.length * 100 || 0
       };
 
-      try {
-        if (typeof this.reportScrape === 'function') {
-          // For details page, count as 1 entry scraped
-          await this.reportScrape({ source: 'gogoanime', entries: 1, errors: 0 });
-        }
-      } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (gogoanime scrapeAnimeDetails):', rErr?.message || rErr);
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: 1, errors: 0 });
       }
 
       return result;
     } catch (err) {
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
-        }
-      } catch (_) {}
-
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
+      }
       throw err;
     }
   }
@@ -205,22 +216,15 @@ export default class GogoanimeScraper extends BaseScraper {
         });
       });
 
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: episodes.length, errors: 0 });
-        }
-      } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (gogoanime scrapeEpisodes):', rErr?.message || rErr);
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: episodes.length, errors: 0 });
       }
 
       return episodes;
     } catch (err) {
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
-        }
-      } catch (_) {}
-
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
+      }
       throw err;
     }
   }
@@ -242,36 +246,25 @@ export default class GogoanimeScraper extends BaseScraper {
         });
       });
 
-      // Filter by preferred server if specified
       let filteredServers = servers;
       if (server) {
         filteredServers = servers.filter(s =>
           s.server.toLowerCase().includes(server.toLowerCase())
         );
       }
-
-      // If no filtered servers, use the first available
       if (filteredServers.length === 0 && servers.length > 0) {
         filteredServers = [servers[0]];
       }
 
-      try {
-        if (typeof this.reportScrape === 'function') {
-          // we don't count sources as "entries" but still report a successful hit
-          await this.reportScrape({ source: 'gogoanime', entries: filteredServers.length, errors: 0 });
-        }
-      } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (gogoanime scrapeEpisodeSources):', rErr?.message || rErr);
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: filteredServers.length, errors: 0 });
       }
 
       return filteredServers;
     } catch (err) {
-      try {
-        if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
-        }
-      } catch (_) {}
-
+      if (typeof this.reportScrape === 'function') {
+        await this.reportScrape({ source: 'gogoanime', entries: 0, errors: 1 });
+      }
       throw err;
     }
   }
