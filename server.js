@@ -2,7 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import redis from './utils/redis.js'; // ✅ we’ll use redis for health check
+import redis from './utils/redis.js'; // ✅ Redis client
+import cron from 'node-cron';
+import GogoAnimeScraper from './scrapers/gogoAnimeScraper.js'; // ✅ your scraper
 
 dotenv.config();
 const app = express();
@@ -156,6 +158,36 @@ app.get('/health', async (req, res) => {
     healthStatus.services.redis === 'up';
 
   res.status(isHealthy ? 200 : 500).json(healthStatus);
+});
+
+// --- Scraper setup ---
+const scraper = new GogoAnimeScraper('https://gogoanimehd.io'); // adjust base URL if needed
+
+// --- Schedule scraper to run every hour ---
+cron.schedule('0 * * * *', async () => {
+  console.log('⏳ Running hourly scraper job...');
+  try {
+    await scraper.run(async () => {
+      await scraper.scrapeTrending(50); // ✅ runs & updates health check
+    });
+    console.log('✅ Hourly scraper job completed');
+  } catch (err) {
+    console.error('❌ Hourly scraper failed:', err.message);
+  }
+});
+
+// --- Manual trigger endpoint (for testing) ---
+app.post('/scrape-now', async (req, res) => {
+  console.log('⚡ Manual scrape triggered');
+  try {
+    await scraper.run(async () => {
+      await scraper.scrapeTrending(50);
+    });
+    res.json({ message: 'Scrape completed successfully' });
+  } catch (err) {
+    console.error('❌ Manual scrape failed:', err.message);
+    res.status(500).json({ error: err.message || 'Scrape failed' });
+  }
 });
 
 // Root route
