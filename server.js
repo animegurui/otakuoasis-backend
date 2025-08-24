@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import redis from './utils/redis.js'; // ✅ Redis client
 import cron from 'node-cron';
-import GogoAnimeScraper from './scrapers/gogoAnimeScraper.js'; // ✅ your scraper
+import GogoAnimeScraper from './scrapers/gogoanimeScraper.js'; // ✅ your scraper
 
 dotenv.config();
 const app = express();
