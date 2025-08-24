@@ -9,13 +9,22 @@ const redis = new Redis({
   maxRetriesPerRequest: 3
 });
 
+// Track connection status
+redis.isReady = false;
+
 redis.on('connect', () => {
-  logger.info('Redis connected');
+  redis.isReady = true;
+  logger.info('✅ Redis connected');
 });
 
 redis.on('error', (error) => {
-  logger.error(`Redis error: ${error.message}`);
+  redis.isReady = false;
+  logger.error(`❌ Redis error: ${error.message}`);
+});
+
+redis.on('end', () => {
+  redis.isReady = false;
+  logger.warn('⚠️ Redis connection closed');
 });
 
 export default redis;
- 
