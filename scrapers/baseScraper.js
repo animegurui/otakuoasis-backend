@@ -1,5 +1,5 @@
 import axios from 'axios';
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 import logger from '../utils/logger.js';
 import { getProxy } from '../services/proxyService.js';
 import redis from '../config/redisClient.js';   // ✅ Redis client
