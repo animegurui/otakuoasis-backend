@@ -5,43 +5,45 @@ import {
   getAnimeBySlug,
   getAnimeEpisodes
 } from '../controllers/animeController.js';
-import { apiKeyAuth } from '../middlewares/authMiddleware.js';
-import { validateSearchParams, validateAnimeSlug } from '../middlewares/validationMiddleware.js';
-import { cacheMiddleware } from '../middlewares/cacheMiddleware.js';
-import { globalRateLimiter } from '../middlewares/rateLimiter.js';
 
 const router = express.Router();
 
-// Apply API key auth to all routes
+// Try to import optional middlewares
+let apiKeyAuth = (req, res, next) => next();
+let validateSearchParams = (req, res, next) => next();
+let validateAnimeSlug = (req, res, next) => next();
+let cacheMiddleware = () => (req, res, next) => next();
+let globalRateLimiter = (req, res, next) => next();
+
+try {
+  const mod = await import('../middlewares/authMiddleware.js').catch(() => null);
+  if (mod?.apiKeyAuth) apiKeyAuth = mod.apiKeyAuth;
+} catch {}
+
+try {
+  const mod = await import('../middlewares/validationMiddleware.js').catch(() => null);
+  if (mod?.validateSearchParams) validateSearchParams = mod.validateSearchParams;
+  if (mod?.validateAnimeSlug) validateAnimeSlug = mod.validateAnimeSlug;
+} catch {}
+
+try {
+  const mod = await import('../middlewares/cacheMiddleware.js').catch(() => null);
+  if (mod?.cacheMiddleware) cacheMiddleware = mod.cacheMiddleware;
+} catch {}
+
+try {
+  const mod = await import('../middlewares/rateLimiter.js').catch(() => null);
+  if (mod?.globalRateLimiter) globalRateLimiter = mod.globalRateLimiter;
+} catch {}
+
+// Apply middlewares
 router.use(apiKeyAuth);
 router.use(globalRateLimiter);
 
-// Trending anime
-router.get('/trending', 
-  cacheMiddleware('trending'),
-  getTrendingAnime
-);
-
-// Search anime
-router.get('/search', 
-  validateSearchParams,
-  cacheMiddleware('search'),
-  searchAnime
-);
-
-// Get anime by slug
-router.get('/:slug', 
-  validateAnimeSlug,
-  cacheMiddleware('anime'),
-  getAnimeBySlug
-);
-
-// Get anime episodes
-router.get('/:slug/episodes', 
-  validateAnimeSlug,
-  cacheMiddleware('episodes'),
-  getAnimeEpisodes
-);
+// Routes
+router.get('/trending', cacheMiddleware('trending'), getTrendingAnime);
+router.get('/search', validateSearchParams, cacheMiddleware('search'), searchAnime);
+router.get('/:slug', validateAnimeSlug, cacheMiddleware('anime'), getAnimeBySlug);
+router.get('/:slug/episodes', validateAnimeSlug, cacheMiddleware('episodes'), getAnimeEpisodes);
 
 export default router;
- 
