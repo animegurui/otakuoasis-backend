@@ -104,29 +104,45 @@ const scrapers = [
 // 🔄 Run scrapers every hour
 cron.schedule('0 * * * *', async () => {
   console.log('⏳ Starting hourly scrape...');
+  let errors = 0;
+
   for (const scraper of scrapers) {
     try {
       await scraper.run();
     } catch (err) {
+      errors++;
       console.error(`❌ Error running ${scraper.constructor.name}:`, err.message);
     }
   }
+
+  // ✅ Store lastScrape & errors in Redis
+  try {
+    await redis.set('scraper:lastScrape', new Date().toISOString());
+    await redis.set('scraper:errors', errors.toString());
+  } catch (err) {
+    console.warn('⚠️ Failed to update scrape metadata in Redis:', err.message);
+  }
+
   console.log('✅ Hourly scrape finished');
 });
 
-// 🔘 Manual trigger endpoint (protected with API key)
+// 🔘 Manual trigger endpoint
 app.post('/scrape-now', async (req, res) => {
-  const providedKey = req.headers['x-api-key'];
-  const expectedKey = process.env.SCRAPER_KEY;
-
-  if (expectedKey && providedKey !== expectedKey) {
-    return res.status(403).json({ error: 'Forbidden – invalid API key' });
-  }
-
   try {
+    let errors = 0;
     for (const scraper of scrapers) {
-      await scraper.run();
+      try {
+        await scraper.run();
+      } catch (err) {
+        errors++;
+        console.error(`❌ Error running ${scraper.constructor.name}:`, err.message);
+      }
     }
+
+    // ✅ Store lastScrape & errors in Redis
+    await redis.set('scraper:lastScrape', new Date().toISOString());
+    await redis.set('scraper:errors', errors.toString());
+
     res.json({ message: '✅ Manual scrape complete' });
   } catch (error) {
     res.status(500).json({ error: error.message || String(error) });
