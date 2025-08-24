@@ -9,12 +9,18 @@ import AggregatedScraper from './scrapers/aggregatedScraper.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/anime', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log('✅ MongoDB connected'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+// --- MongoDB connection (fixed)
+const MONGO_URI = process.env.MONGODB_URI;
+
+if (!MONGO_URI) {
+  console.error("❌ MONGODB_URI is not defined in environment variables");
+  process.exit(1); // Stop the app so we don’t silently fall back to localhost
+}
+
+mongoose.connect(MONGO_URI, {
+  dbName: "otakuoasis", // change if your DB name is different
+}).then(() => console.log("✅ Connected to MongoDB Atlas"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
 
 // --- Aggregated scraper instance
 const scraper = new AggregatedScraper();
