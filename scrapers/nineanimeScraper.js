@@ -1,143 +1,174 @@
 import BaseScraper from './baseScraper.js';
+import mongoose from 'mongoose';
 
-export default class NineanimeScraper extends BaseScraper {
+const Anime = mongoose.models.Anime || mongoose.model('Anime', new mongoose.Schema({
+  id: String,
+  title: String,
+  slug: String,
+  image: String,
+  latestEpisode: Number,
+  source: String,
+  updatedAt: { type: Date, default: Date.now }
+}));
+
+export default class NineAnimeScraper extends BaseScraper {
   constructor() {
-    super('https://9animetv.to', {
-      headers: {
-        'Referer': 'https://9animetv.to/',
-        'Accept-Encoding': 'gzip'
-      }
-    });
+    super('https://9anime.pl'); // base from your update
   }
 
+  // Run: scrape trending + upsert to MongoDB
+  async run() {
+    console.log('🚀 Running NineAnimeScraper...');
+    try {
+      const { data: trending } = await this.scrapeTrending(20);
+
+      if (!trending || trending.length === 0) {
+        console.warn('⚠️ No trending anime scraped from nineanime');
+        return 0;
+      }
+
+      for (const anime of trending) {
+        await Anime.findOneAndUpdate(
+          { id: anime.id },
+          { ...anime, updatedAt: new Date() },
+          { upsert: true, new: true }
+        );
+      }
+
+      console.log(`✅ NineAnimeScraper finished — saved ${trending.length} entries`);
+      return trending.length;
+    } catch (err) {
+      console.error('❌ NineAnimeScraper run() failed:', err.message || err);
+      throw err;
+    }
+  }
+
+  // Trending (from your nineanime update)
   async scrapeTrending(limit = 20) {
     try {
-      const url = `${this.baseUrl}/home`;
+      const url = `${this.baseUrl}/trending`;
       const $ = await this.fetchPage(url);
 
       const trending = [];
-
-      $('.trending-list .item').slice(0, limit).each((i, el) => {
+      $('.film-list > .item').slice(0, limit).each((i, el) => {
         const $el = $(el);
-        const title = $el.find('.name').text().trim();
-        const slug = $el.find('a').attr('href').split('/')[2];
-        const image = $el.find('img').attr('src');
+        const title = $el.find('.info .name').text().trim();
+        // try href from either .info .name anchor or outer anchor
+        const href = $el.find('.info .name').attr('href') || $el.find('a').attr('href') || '';
+        const slug = href.split('/').filter(Boolean).pop() || '';
+        const image = $el.find('.poster img').attr('src') || $el.find('img').attr('src') || '';
+        const episode = ($el.find('.ep-status').text().trim().match(/\d+/) || ['1'])[0];
 
         trending.push({
-          id: `9anime-${slug}`,
+          id: `nine-${slug}`,
           title,
           slug,
           image,
-          source: '9anime'
+          latestEpisode: parseInt(episode, 10) || 1,
+          source: 'nineanime'
         });
       });
 
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: trending.length, errors: 0 });
+          await this.reportScrape({ source: 'nineanime', entries: trending.length, errors: 0 });
         }
       } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (9anime scrapeTrending):', rErr?.message || rErr);
+        console.warn('⚠️ reportScrape failed (nineanime scrapeTrending):', rErr?.message || rErr);
       }
 
-      return {
-        data: trending,
-        sources: [this.baseUrl]
-      };
+      return { data: trending, sources: [this.baseUrl] };
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: 0, errors: 1 });
+          await this.reportScrape({ source: 'nineanime', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Search: adapted from original implementation
   async scrapeSearch(query, page = 1) {
     try {
       const url = `${this.baseUrl}/search?keyword=${encodeURIComponent(query)}&page=${page}`;
       const $ = await this.fetchPage(url);
 
       const results = [];
-      let hasMore = true;
-
-      $('.film-list .item').each((i, el) => {
+      $('.film-list .item, .film-list > .item').each((i, el) => {
         const $el = $(el);
-        const title = $el.find('.name').text().trim();
-        const slug = $el.find('a').attr('href').split('/')[2];
-        const image = $el.find('img').attr('src');
+        const title = $el.find('.name, .info .name').text().trim();
+        const href = $el.find('a').attr('href') || '';
+        const slug = href.split('/').filter(Boolean).pop() || '';
+        const image = $el.find('img').attr('src') || '';
 
         results.push({
-          id: `9anime-${slug}`,
+          id: `nine-${slug}`,
           title,
           slug,
           image,
-          source: '9anime'
+          source: 'nineanime'
         });
       });
 
-      // Check if there's more pages
-      hasMore = $('.pagination').find('li:last-child a').text().includes('Next');
+      // Check if there's more pages (naive)
+      let hasMore = false;
+      hasMore = $('.pagination').find('a:contains("Next"), a:contains("next")').length > 0;
 
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: results.length, errors: 0 });
+          await this.reportScrape({ source: 'nineanime', entries: results.length, errors: 0 });
         }
       } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (9anime scrapeSearch):', rErr?.message || rErr);
+        console.warn('⚠️ reportScrape failed (nineanime scrapeSearch):', rErr?.message || rErr);
       }
 
-      return {
-        data: results,
-        hasMore,
-        currentPage: page,
-        source: '9anime'
-      };
+      return { data: results, hasMore, currentPage: page, source: 'nineanime' };
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: 0, errors: 1 });
+          await this.reportScrape({ source: 'nineanime', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Anime details: adapted from your original nineanimeScraper
   async scrapeAnimeDetails(slug) {
     try {
       const url = `${this.baseUrl}/watch/${slug}`;
       const $ = await this.fetchPage(url);
 
-      const title = $('.detail .title').text().trim();
-      const image = $('.detail .poster img').attr('src');
-      const description = $('.detail .content').text().trim();
+      const title = $('.detail .title').text().trim() || $('.film-detail .title').text().trim();
+      const image = $('.detail .poster img').attr('src') || $('.poster img').attr('src') || '';
+      const description = $('.detail .content').text().trim() || $('.film-description').text().trim();
 
       const details = {};
-      $('.detail .meta .row').each((i, el) => {
+      $('.detail .meta .row, .film-detail .item').each((i, el) => {
         const $el = $(el);
-        const key = $el.find('.type').text().trim().toLowerCase();
-        const value = $el.find('.content').text().trim();
-        details[key] = value;
+        const key = ($el.find('.type, .label').text() || '').trim().toLowerCase();
+        const value = ($el.find('.content, .value').text() || $el.text()).trim();
+        if (key) details[key] = value;
       });
 
       // Extract genres
       const genres = [];
-      $('.detail .genre a').each((i, el) => {
+      $('.detail .genre a, .genres a').each((i, el) => {
         genres.push($(el).text().trim());
       });
 
       // Extract episodes
       const episodes = [];
-      $('#episodes a').each((i, el) => {
+      $('#episodes a, .eps a').each((i, el) => {
         const $el = $(el);
-        const number = $el.text().trim();
-        const url = $el.attr('href').split('/')[2];
+        const numberText = $el.text().trim();
+        const number = parseInt(numberText.match(/\d+/)?.[0] || (i + 1), 10);
+        const href = $el.attr('href') || '';
+        const epSlug = href.split('/').filter(Boolean).pop() || '';
         episodes.push({
-          number: parseInt(number),
-          slug: url
+          number,
+          slug: epSlug
         });
       });
 
@@ -151,46 +182,47 @@ export default class NineanimeScraper extends BaseScraper {
         released: details['year'],
         genres,
         episodes,
-        source: '9anime',
+        source: 'nineanime',
         rating: parseFloat(details['score']?.split('/')[0]) || 0,
         popularity: episodes.length * 100 || 0
       };
 
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: 1, errors: 0 });
+          await this.reportScrape({ source: 'nineanime', entries: 1, errors: 0 });
         }
       } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (9anime scrapeAnimeDetails):', rErr?.message || rErr);
+        console.warn('⚠️ reportScrape failed (nineanime scrapeAnimeDetails):', rErr?.message || rErr);
       }
 
       return result;
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: 0, errors: 1 });
+          await this.reportScrape({ source: 'nineanime', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Episodes
   async scrapeEpisodes(slug) {
     try {
       const url = `${this.baseUrl}/watch/${slug}`;
       const $ = await this.fetchPage(url);
 
       const episodes = [];
-
-      $('#episodes a').each((i, el) => {
+      $('#episodes a, .eps a').each((i, el) => {
         const $el = $(el);
-        const number = $el.text().trim();
-        const url = $el.attr('href').split('/')[2];
+        const numberText = $el.text().trim();
+        const number = parseInt(numberText.match(/\d+/)?.[0] || (i + 1), 10);
+        const href = $el.attr('href') || '';
+        const epSlug = href.split('/').filter(Boolean).pop() || '';
 
         episodes.push({
-          number: parseInt(number),
-          slug: url,
+          number,
+          slug: epSlug,
           title: `Episode ${number}`,
           thumbnail: '',
           animeSlug: slug
@@ -199,24 +231,24 @@ export default class NineanimeScraper extends BaseScraper {
 
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: episodes.length, errors: 0 });
+          await this.reportScrape({ source: 'nineanime', entries: episodes.length, errors: 0 });
         }
       } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (9anime scrapeEpisodes):', rErr?.message || rErr);
+        console.warn('⚠️ reportScrape failed (nineanime scrapeEpisodes):', rErr?.message || rErr);
       }
 
       return episodes;
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: 0, errors: 1 });
+          await this.reportScrape({ source: 'nineanime', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
 
+  // Episode sources
   async scrapeEpisodeSources(slug, episodeNumber, server = '') {
     try {
       const url = `${this.baseUrl}/watch/${slug}/ep-${episodeNumber}`;
@@ -231,35 +263,40 @@ export default class NineanimeScraper extends BaseScraper {
         });
       });
 
+      // Fallback anchors
+      $('.server-list a, .servers a').each((i, el) => {
+        const $el = $(el);
+        servers.push({
+          server: $el.text().trim() || `server-${i}`,
+          url: $el.attr('href') || $el.data('src') || ''
+        });
+      });
+
       // Filter by preferred server if specified
-      let filteredServers = servers;
+      let filtered = servers;
       if (server) {
-        filteredServers = servers.filter(s =>
-          s.server.toLowerCase().includes(server.toLowerCase())
-        );
+        filtered = servers.filter(s => s.server.toLowerCase().includes(server.toLowerCase()));
       }
 
-      // If no filtered servers, use the first available
-      if (filteredServers.length === 0 && servers.length > 0) {
-        filteredServers = [servers[0]];
+      if (filtered.length === 0 && servers.length > 0) {
+        filtered = [servers[0]];
       }
 
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: filteredServers.length, errors: 0 });
+          await this.reportScrape({ source: 'nineanime', entries: filtered.length, errors: 0 });
         }
       } catch (rErr) {
-        console.warn('⚠️ reportScrape failed (9anime scrapeEpisodeSources):', rErr?.message || rErr);
+        console.warn('⚠️ reportScrape failed (nineanime scrapeEpisodeSources):', rErr?.message || rErr);
       }
 
-      return filteredServers;
+      return filtered;
     } catch (err) {
       try {
         if (typeof this.reportScrape === 'function') {
-          await this.reportScrape({ source: '9anime', entries: 0, errors: 1 });
+          await this.reportScrape({ source: 'nineanime', entries: 0, errors: 1 });
         }
       } catch (_) {}
-
       throw err;
     }
   }
