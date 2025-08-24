@@ -5,64 +5,64 @@ import {
   getAnimeBySlug,
   getAnimeEpisodes
 } from '../controllers/animeController.js';
-import redis from '../config/redis.js';
+import redis from '../utils/redis.js'; // use the Redis client
 
 const router = express.Router();
 
-// Middleware placeholders
+// Optional middlewares
 let apiKeyAuth = (req, res, next) => next();
 let validateSearchParams = (req, res, next) => next();
 let validateAnimeSlug = (req, res, next) => next();
 let globalRateLimiter = (req, res, next) => next();
 
-// Optional middlewares
+// Import optional middlewares if available
 try {
   const mod = await import('../middlewares/authMiddleware.js').catch(() => null);
   if (mod?.apiKeyAuth) apiKeyAuth = mod.apiKeyAuth;
 } catch {}
-
 try {
   const mod = await import('../middlewares/validationMiddleware.js').catch(() => null);
   if (mod?.validateSearchParams) validateSearchParams = mod.validateSearchParams;
   if (mod?.validateAnimeSlug) validateAnimeSlug = mod.validateAnimeSlug;
 } catch {}
-
 try {
   const mod = await import('../middlewares/rateLimiter.js').catch(() => null);
   if (mod?.globalRateLimiter) globalRateLimiter = mod.globalRateLimiter;
 } catch {}
 
+// Middleware: Cache wrapper
+const cacheMiddleware = (keyPrefix) => async (req, res, next) => {
+  if (!redis.status || redis.status !== 'ready') return next(); // Redis not ready
+
+  const key = `${keyPrefix}:${req.originalUrl}`;
+  try {
+    const cached = await redis.get(key);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+  } catch (err) {
+    console.warn('⚠️ Redis cache read error:', err.message || err);
+  }
+
+  // Override res.json to cache the response
+  const originalJson = res.json.bind(res);
+  res.json = async (data) => {
+    try {
+      await redis.set(key, JSON.stringify(data), 'EX', 3600); // cache 1 hour
+    } catch (err) {
+      console.warn('⚠️ Redis cache write error:', err.message || err);
+    }
+    return originalJson(data);
+  };
+
+  next();
+};
+
 // Apply middlewares
 router.use(apiKeyAuth);
 router.use(globalRateLimiter);
 
-// Cache middleware using Redis
-const cacheMiddleware = (keyPrefix) => async (req, res, next) => {
-  if (!redis || redis.status !== 'ready') {
-    console.warn(`⚠️ Redis not ready — skipping cache for ${keyPrefix}`);
-    return next();
-  }
-
-  const cacheKey = `${keyPrefix}:${req.originalUrl}`;
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      return res.json(JSON.parse(cached));
-    }
-    // Override res.json to cache the response
-    const originalJson = res.json.bind(res);
-    res.json = (data) => {
-      redis.set(cacheKey, JSON.stringify(data), 'EX', 3600); // 1 hour cache
-      return originalJson(data);
-    };
-    next();
-  } catch (err) {
-    console.warn(`⚠️ Cache error for ${keyPrefix}:${req.originalUrl}`, err.message);
-    next();
-  }
-};
-
-// Routes
+// Routes with caching
 router.get('/trending', cacheMiddleware('trending'), getTrendingAnime);
 router.get('/search', validateSearchParams, cacheMiddleware('search'), searchAnime);
 router.get('/:slug', validateAnimeSlug, cacheMiddleware('anime'), getAnimeBySlug);
