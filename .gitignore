@@ -10,6 +10,7 @@ pnpm-debug.log*
 .env
 .env.test
 .env.local
+.env.example
 
 # Dependency directories
 node_modules/
@@ -33,4 +34,16 @@ build
 
 # Coverage
 coverage
- 
+
+# Redis dump files
+dump.rdb
+appendonly.aof
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS generated files
+Thumbs.db
+Desktop.ini
