@@ -20,7 +20,7 @@ mongoose.connect(MONGO_URI, {
 // --- Aggregated scraper instance
 const scraper = new AggregatedScraper();
 
-// --- Root route (homepage)
+// --- Routes
 app.get('/', (req, res) => {
   res.json({
     message: "🚀 Welcome to OtakuOasis API",
@@ -30,17 +30,12 @@ app.get('/', (req, res) => {
       search: "/search?q=naruto",
       episodes: "/episodes/:source/:slug",
       episodeSources: "/episode-sources/:source/:slug/:episode",
-      debugMongo: "/__debug/mongo"
+      debugMongo: "/__debug/mongo",
+      debugScrape: "/__debug/scrape?query=naruto" // new manual scrape route
     }
   });
 });
 
-// --- Health check route
-app.get('/health', (req, res) => {
-  res.json({ status: "ok", uptime: process.uptime() });
-});
-
-// --- Routes
 app.get('/trending', async (req, res) => {
   try {
     const data = await scraper.aggregateTrending();
@@ -93,6 +88,30 @@ app.get('/__debug/mongo', (req, res) => {
     status: states[state] || "unknown",
     uriInUse: MONGO_URI.startsWith("mongodb+srv") ? "Atlas URI" : "Local/Other",
   });
+});
+
+// --- Universal manual scrape route
+app.get('/__debug/scrape', async (req, res) => {
+  try {
+    const { query, source, slug, episode } = req.query;
+
+    let data;
+
+    if (query) {
+      data = await scraper.aggregateSearch(query);
+    } else if (source && slug && episode) {
+      data = await scraper.aggregateEpisodeSources(source, slug, episode);
+    } else if (source && slug) {
+      data = await scraper.aggregateEpisodes(source, slug);
+    } else {
+      data = await scraper.aggregateTrending();
+    }
+
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error("❌ Manual scrape error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
