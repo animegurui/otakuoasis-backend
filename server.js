@@ -2,16 +2,19 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import redis from './utils/redis.js'; // Redis client
+import redis from './utils/redis.js'; // ✅ we’ll use redis for health check
 
 dotenv.config();
 const app = express();
+
+// --- NEW LINE: Trust proxy for Render to handle X-Forwarded-For correctly ---
+app.set('trust proxy', true);
 
 // Basic middleware
 app.use(cors());
 app.use(express.json());
 
-// --- Optional: morgan logging ---
+// --- Optional: morgan logging (won't crash if not installed) ---
 let morganMiddleware = (req, res, next) => next();
 try {
   const morganModule = await import('morgan').catch(() => null);
@@ -23,32 +26,25 @@ try {
     console.warn('⚠️ Morgan not installed, skipping request logging');
   }
 } catch (err) {
-  console.warn('⚠️ Morgan import failed', err.message);
+  console.warn('⚠️ Morgan import failed, skipping request logging', err.message);
 }
 app.use(morganMiddleware);
 
-// --- MongoDB connection ---
+// --- Optional: MongoDB (connect only if MONGO_URI provided) ---
 if (process.env.MONGO_URI) {
-  mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log('✅ Connected to MongoDB'))
-    .catch(err => console.error('❌ MongoDB connection error:', err.message || err));
+  mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+  }).then(() => {
+    console.log('✅ Connected to MongoDB');
+  }).catch(err => {
+    console.error('❌ MongoDB connection error:', err.message || err);
+  });
 } else {
   console.warn('⚠️ MONGO_URI not set — skipping MongoDB connection');
 }
 
-// --- Redis readiness check ---
-async function checkRedis() {
-  try {
-    await redis.ping();
-    console.log('✅ Redis connected');
-  } catch (err) {
-    console.warn('⚠️ Redis connection warning:', err.message || err);
-    // Do not throw — allow server to run even if Redis is temporarily unavailable
-  }
-}
-await checkRedis();
-
-// --- Mount anime routes ---
+// --- Optional: Mount anime routes if file exists ---
 try {
   const animeRoutesModule = await import('./routes/animeRoutes.js').catch(() => null);
   const animeRoutes = animeRoutesModule && (animeRoutesModule.default || animeRoutesModule);
@@ -62,17 +58,18 @@ try {
   console.warn('⚠️ Error loading animeRoutes:', err.message || err);
 }
 
-// --- Cache management routes ---
+// --- Optional: cache clear endpoints if cache util exists ---
 try {
   const cacheUtilsModule = await import('./utils/cacheUtils.js').catch(() => null);
   const { clearCache } = cacheUtilsModule || {};
   if (typeof clearCache === 'function') {
     app.delete('/cache/:slug', async (req, res) => {
       try {
-        await clearCache(req.params.slug);
-        res.json({ message: `Cache cleared for ${req.params.slug}` });
-      } catch (err) {
-        res.status(500).json({ error: err.message || String(err) });
+        const slug = req.params.slug;
+        await clearCache(slug);
+        res.json({ message: `Cache cleared for ${slug}` });
+      } catch (error) {
+        res.status(500).json({ error: error.message || String(error) });
       }
     });
 
@@ -80,8 +77,8 @@ try {
       try {
         await clearCache('*');
         res.json({ message: 'All cache cleared' });
-      } catch (err) {
-        res.status(500).json({ error: err.message || String(err) });
+      } catch (error) {
+        res.status(500).json({ error: error.message || String(error) });
       }
     });
 
@@ -95,42 +92,62 @@ try {
 
 // --- System endpoints ---
 app.get('/ready', (req, res) => {
-  res.json({ status: 'ready', uptime: process.uptime(), timestamp: new Date() });
+  res.json({
+    status: 'ready',
+    uptime: process.uptime(),
+    timestamp: new Date()
+  });
 });
 
 app.get('/health', async (req, res) => {
-  const health = {
+  const healthStatus = {
     uptime: process.uptime(),
     timestamp: new Date(),
-    services: { mongo: 'unknown', redis: 'unknown' }
+    services: {
+      mongo: 'unknown',
+      redis: 'unknown'
+    }
   };
 
-  // MongoDB health
-  health.services.mongo = mongoose.connection.readyState === 1 ? 'up' : 'down';
-
-  // Redis health
   try {
-    await redis.ping();
-    health.services.redis = 'up';
+    if (mongoose.connection.readyState === 1) {
+      healthStatus.services.mongo = 'up';
+    } else {
+      healthStatus.services.mongo = 'down';
+    }
   } catch {
-    health.services.redis = 'down';
+    healthStatus.services.mongo = 'down';
   }
 
-  const statusCode = health.services.mongo === 'up' && health.services.redis === 'up' ? 200 : 500;
-  res.status(statusCode).json(health);
+  try {
+    await redis.ping();
+    healthStatus.services.redis = 'up';
+  } catch {
+    healthStatus.services.redis = 'down';
+  }
+
+  const isHealthy =
+    healthStatus.services.mongo === 'up' &&
+    healthStatus.services.redis === 'up';
+
+  res.status(isHealthy ? 200 : 500).json(healthStatus);
 });
 
 // Root route
-app.get('/', (req, res) => res.send('Backend is running 🚀'));
+app.get('/', (req, res) => {
+  res.send('Backend is running 🚀');
+});
 
-// Global error handler
+// Global error handler (safety)
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: err?.message || 'Internal Server Error' });
 });
 
-// Start server
+// Start the server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
 
 export default app;
