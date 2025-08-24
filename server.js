@@ -9,13 +9,8 @@ import AggregatedScraper from './scrapers/aggregatedScraper.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- MongoDB connection (fixed)
-const MONGO_URI = process.env.MONGODB_URI;
-
-if (!MONGO_URI) {
-  console.error("❌ MONGODB_URI is not defined in environment variables");
-  process.exit(1); // Stop the app so we don’t silently fall back to localhost
-}
+// --- MongoDB connection (using your URI directly)
+const MONGO_URI = process.env.MONGODB_URI || "mongodb+srv://Calvinwhyte:07038303357Mummy@animegurui.jwvxzei.mongodb.net/?retryWrites=true&w=majority&appName=Animegurui";
 
 mongoose.connect(MONGO_URI, {
   dbName: "otakuoasis", // change if your DB name is different
@@ -68,6 +63,16 @@ app.get('/episode-sources/:source/:slug/:episode', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch episode sources' });
   }
+});
+
+// --- Debug route to verify MongoDB connection
+app.get('/__debug/mongo', (req, res) => {
+  const state = mongoose.connection.readyState;
+  const states = ["disconnected", "connected", "connecting", "disconnecting"];
+  res.json({
+    status: states[state] || "unknown",
+    uriInUse: MONGO_URI.startsWith("mongodb+srv") ? "Atlas URI" : "Local/Other",
+  });
 });
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
