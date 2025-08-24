@@ -106,12 +106,29 @@ app.get('/health', async (req, res) => {
     services: {
       mongo: 'unknown',
       redis: 'unknown'
+    },
+    scraper: {
+      lastScrape: null,
+      entriesInDatabase: null,
+      errors: 0
     }
   };
 
+  // --- Check Mongo ---
   try {
     if (mongoose.connection.readyState === 1) {
       healthStatus.services.mongo = 'up';
+
+      // 🔍 Count anime entries if model exists
+      try {
+        const AnimeModel = mongoose.models.Anime || null;
+        if (AnimeModel) {
+          healthStatus.scraper.entriesInDatabase = await AnimeModel.countDocuments();
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not count anime entries:', err.message);
+      }
+
     } else {
       healthStatus.services.mongo = 'down';
     }
@@ -119,9 +136,17 @@ app.get('/health', async (req, res) => {
     healthStatus.services.mongo = 'down';
   }
 
+  // --- Check Redis ---
   try {
     await redis.ping();
     healthStatus.services.redis = 'up';
+
+    // ✅ If scraper sets metadata in Redis
+    const lastScrape = await redis.get('scraper:lastScrape');
+    const scrapeErrors = await redis.get('scraper:errors');
+    healthStatus.scraper.lastScrape = lastScrape || null;
+    healthStatus.scraper.errors = scrapeErrors ? parseInt(scrapeErrors, 10) : 0;
+
   } catch {
     healthStatus.services.redis = 'down';
   }
